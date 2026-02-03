@@ -8,6 +8,11 @@ Brotato와 Shape of Dreams를 래퍼런스로 한 자동 전투 기반 액션 �
 
 ---
 
+## YoutubeLink
+
+유튜브 링크[https://www.youtube.com/watch?si=68Xc2Xz6WCqP4tzr&v=C7CDYLtMGOw&feature=youtu.be]
+
+
 ## 📸 Screenshots 
 
 <img width="1596" height="896" alt="녹음 2026-02-01 190417 mp4_20260201_234128 129" src="https://github.com/user-attachments/assets/858bd124-212f-47f4-8302-432f49d8c94f" />
