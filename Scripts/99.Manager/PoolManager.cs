@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
@@ -11,11 +10,12 @@ public class PoolManager : MonoBehaviour
     [Header("씬 로드 시 파괴하지 않은 Key 리스트")]
     [SerializeField] string[] excludeKeys;
 
-    private static PoolManager instance;
-
     private Dictionary<string, ObjectPool> objectPools = new Dictionary<string, ObjectPool>();
 
-    public static PoolManager Instance { get; set; }
+    // 씬이 바뀌어도 유지할 Pool Key (excludeKeys + CreatePool에서 persistent로 생성한 Pool)
+    private HashSet<string> persistentKeys = new HashSet<string>();
+
+    public static PoolManager Instance { get; private set; }
 
     private void OnEnable()
     {
@@ -25,7 +25,7 @@ public class PoolManager : MonoBehaviour
 
     private void OnDisable()
     {
-        // 이벤트 구독 해제 
+        // 이벤트 구독 해제
         SceneManager.sceneLoaded -= OnSceneLoaded;
     }
 
@@ -34,15 +34,16 @@ public class PoolManager : MonoBehaviour
         if (Instance == null)
         {
             Instance = this;
-            DontDestroyOnLoad(Instance);
+            DontDestroyOnLoad(gameObject);
         }
         else
         {
             Destroy(gameObject);
+            return;
         }
-    }
 
-    private PoolManager() { }
+        if (excludeKeys != null) persistentKeys.UnionWith(excludeKeys);
+    }
 
     /// <summary>
     /// ObjectPool 생성
@@ -51,11 +52,18 @@ public class PoolManager : MonoBehaviour
     /// <param name="prefab">Pool 오브젝트</param>
     /// <param name="initialSize">오브젝트 생성 개수</param>
     /// <param name="parent">오브젝트 생성 부모</param>
-    public void CreatePool(string key, GameObject prefab, int initialSize, Transform parent = null)
+    /// <param name="persistent">씬이 바뀌어도 Pool을 유지할지 여부 (DontDestroyOnLoad 오브젝트가 만드는 Pool)</param>
+    public void CreatePool(string key, GameObject prefab, int initialSize, Transform parent = null, bool persistent = false)
     {
         if (objectPools.ContainsKey(key))
         {
-            Debug.Log($"해당 {key}값을 가지고 있는 ObjectPool이 이미 존재합니다.");
+            Debug.LogWarning($"[PoolManager] 해당 {key}값을 가지고 있는 ObjectPool이 이미 존재합니다.");
+            return;
+        }
+
+        if (prefab == null)
+        {
+            Debug.LogError($"[PoolManager] {key} Pool의 prefab이 비어있습니다.");
             return;
         }
 
@@ -69,13 +77,15 @@ public class PoolManager : MonoBehaviour
 
         ObjectPool pool = new ObjectPool(prefab, initialSize, newParent);
         objectPools.Add(key, pool);
+
+        if (persistent) persistentKeys.Add(key);
     }
 
     /// <summary>
     /// ObjectPool에서 Object 가져오기
     /// </summary>
     /// <param name="key">Pool Key</param>
-    /// <returns>Pool Object</returns>
+    /// <returns>Pool Object (Pool이 없으면 null)</returns>
     public GameObject GetObject(string key)
     {
         // Dictionary에서 해당 key에 맞는 object를 가져옴
@@ -84,7 +94,7 @@ public class PoolManager : MonoBehaviour
             return pool.Get();
         }
 
-        Debug.Log($"해당 {key}값을 가지고 있는 ObjectPool이 존재하지 않습니다");
+        Debug.LogError($"[PoolManager] 해당 {key}값을 가지고 있는 ObjectPool이 존재하지 않습니다");
         return null;
     }
 
@@ -105,10 +115,10 @@ public class PoolManager : MonoBehaviour
             // Pool 없다면 오브젝트를 강제로 비활성화하여 디버그 출력
             if (obj != null)
             {
-                obj.gameObject.SetActive(false);
+                obj.SetActive(false);
             }
 
-            Debug.Log($"해당 {key}값을 가지고 있는 ObjectPool이 존재하지 않습니다");
+            Debug.LogWarning($"[PoolManager] 해당 {key}값을 가지고 있는 ObjectPool이 존재하지 않습니다");
         }
     }
 
@@ -137,7 +147,7 @@ public class PoolManager : MonoBehaviour
         if (objectPools.TryGetValue(key, out ObjectPool pool))
             return pool.TryGet(out obj);
 
-        Debug.Log($"해당 {key}값을 가지고 있는 ObjectPool이 존재하지 않습니다");
+        Debug.LogWarning($"[PoolManager] 해당 {key}값을 가지고 있는 ObjectPool이 존재하지 않습니다");
         return false;
     }
 
@@ -152,28 +162,23 @@ public class PoolManager : MonoBehaviour
     #region Scene 로드 시 Pool 초기화
     public void OnSceneLoaded(Scene scene, LoadSceneMode mode)
     {
-        // 필요한 키 빼고 모두 삭제
-        ClearAllPoolOnLoadedWithOutArray(excludeKeys);
+        // 유지할 키 빼고 모두 삭제
+        ClearPoolsExceptPersistent();
     }
 
-    private void ClearAllPoolOnLoadedWithOutArray(string[] outKeys)
+    private void ClearPoolsExceptPersistent()
     {
-        // string[]에 포함된 key값만 빼고 모두 삭제
-        List<string> keysToRemove = objectPools.Keys
-            .Where(key => !outKeys.Contains(key))
-            .ToList();
+        List<string> keysToRemove = new List<string>();
+        foreach (string key in objectPools.Keys)
+        {
+            if (!persistentKeys.Contains(key)) keysToRemove.Add(key);
+        }
 
         // Pool 정리
         foreach (string key in keysToRemove)
         {
-            if (objectPools.ContainsKey(key))
-            {
-                // ClearPool 호출
-                objectPools[key].ClearPool();
-
-                // 딕셔너리에서 제거
-                objectPools.Remove(key);
-            }
+            objectPools[key].ClearPool();
+            objectPools.Remove(key);
         }
     }
     #endregion

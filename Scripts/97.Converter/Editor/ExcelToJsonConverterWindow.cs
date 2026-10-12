@@ -6,10 +6,13 @@ using UnityEngine;
 // excelFilePath: Excel 파일 주소
 // jsonOutputFolder: 저장할 Json 폴더 주소
 // Json 저장 위치는 Resources 폴더 내 Data에 위치함
-// 저장 위치 고정 시 Define -> 폴더 경로 상수화
+// 선택한 경로는 EditorPrefs에 저장해 창을 다시 열어도 유지
 public class ExcelToJsonConverterWindow : EditorWindow
 {
-    public string excelFilePath;
+    private const string EXCEL_PATH_PREF = "ExcelToJson.ExcelFilePath";
+    private const string OUTPUT_FOLDER_PREF = "ExcelToJson.JsonOutputFolder";
+
+    private string excelFilePath;
     private string jsonOutputFolder;
 
     [MenuItem("Tools/Excel to JSON Converter")]
@@ -17,6 +20,12 @@ public class ExcelToJsonConverterWindow : EditorWindow
     {
         ExcelToJsonConverterWindow window = GetWindow<ExcelToJsonConverterWindow>("Excel to JSON Converter");
         window.Show();
+    }
+
+    private void OnEnable()
+    {
+        excelFilePath = EditorPrefs.GetString(EXCEL_PATH_PREF, "");
+        jsonOutputFolder = EditorPrefs.GetString(OUTPUT_FOLDER_PREF, "");
     }
 
     private void OnGUI()
@@ -28,11 +37,11 @@ public class ExcelToJsonConverterWindow : EditorWindow
             string path = EditorUtility.OpenFilePanel("Select Excel File", "", "xlsx");
             if (!string.IsNullOrEmpty(path))
             {
-                excelFilePath = path;
+                SetExcelFilePath(path);
             }
         }
 
-        EditorGUILayout.TextField("Excel File Path", excelFilePath);
+        SetExcelFilePath(EditorGUILayout.TextField("Excel File Path", excelFilePath));
 
         GUILayout.Space(10);
 
@@ -43,21 +52,21 @@ public class ExcelToJsonConverterWindow : EditorWindow
             string folderPath = EditorUtility.OpenFolderPanel("Select Json Output Folder", "", "");
             if (!string.IsNullOrEmpty(folderPath))
             {
-                jsonOutputFolder = folderPath;
+                SetJsonOutputFolder(folderPath);
             }
         }
 
         if (GUILayout.Button("Set Json Output Folder To Resource/Data"))
         {
-            jsonOutputFolder = Path.Combine(UnityEngine.Application.dataPath, "Resources", "Data");
+            SetJsonOutputFolder(Path.Combine(Application.dataPath, "Resources", "Data"));
         }
 
         if (GUILayout.Button("Set Json Output Folder To Resource/Data/Localization"))
         {
-            jsonOutputFolder = Path.Combine(UnityEngine.Application.dataPath, "Resources", "Data", "Localization");
+            SetJsonOutputFolder(Path.Combine(Application.dataPath, "Resources", "Data", "Localization"));
         }
 
-        EditorGUILayout.TextField("Json Folder Path", jsonOutputFolder);
+        SetJsonOutputFolder(EditorGUILayout.TextField("Json Folder Path", jsonOutputFolder));
 
         GUILayout.Space(10);
 
@@ -72,5 +81,18 @@ public class ExcelToJsonConverterWindow : EditorWindow
             converter.ConvertAllSheetsToJson();
         }
     }
-}
 
+    private void SetExcelFilePath(string path)
+    {
+        if (path == excelFilePath) return;
+        excelFilePath = path;
+        EditorPrefs.SetString(EXCEL_PATH_PREF, path);
+    }
+
+    private void SetJsonOutputFolder(string path)
+    {
+        if (path == jsonOutputFolder) return;
+        jsonOutputFolder = path;
+        EditorPrefs.SetString(OUTPUT_FOLDER_PREF, path);
+    }
+}

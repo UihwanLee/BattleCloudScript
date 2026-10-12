@@ -2,13 +2,13 @@ using System.Collections.Generic;
 using UnityEngine;
 
 // 게임 내 사용할 오브젝트들을 Pool에 담을 수 있는 클래스
-// pool 타입은 GameObject로 정의한다. 
+// pool 타입은 GameObject로 정의한다.
 // parent를 지정하여 특정 부모 Transform에서 생성할 수 있도록 설계
-public class ObjectPool 
+public class ObjectPool
 {
     private Queue<GameObject> pool = new Queue<GameObject>();      // 재활용 오브젝트에 담을 Queue
     private GameObject prefab;                                     // 복사하여 사용할 원본 오브젝트
-    private Transform parent;                                      // 재활용할 오브젝트를 모아둘 부모 프로젝트
+    private Transform parent;                                      // 재활용할 오브젝트를 모아둘 부모 Transform
 
     private HashSet<GameObject> activeObjects = new HashSet<GameObject>(); // 사용중인 오브젝트
 
@@ -26,7 +26,7 @@ public class ObjectPool
         for (int i = 0; i < initialSize; i++)
         {
             GameObject obj = GameObject.Instantiate(prefab, parent);
-            obj.gameObject.SetActive(false);
+            obj.SetActive(false);
             pool.Enqueue(obj);
         }
     }
@@ -38,36 +38,44 @@ public class ObjectPool
     public GameObject Get()
     {
         // Pool에서 해당 오브젝트가 없을 시 생성해서 반환
-        GameObject obj = pool.Count > 0 ? pool.Dequeue() : GameObject.Instantiate(prefab, parent);
+        if (!TryDequeue(out GameObject obj))
+            obj = GameObject.Instantiate(prefab, parent);
 
-        // 오브젝트 활성화
-        obj.gameObject.SetActive(true);
-        activeObjects.Add(obj);
-
-        // 오브젝트 반환
+        Activate(obj);
         return obj;
     }
+
+    /// <summary>
+    /// Pool에 남은 오브젝트가 있을 때만 가져오기 (새로 생성하지 않음)
+    /// </summary>
     public bool TryGet(out GameObject obj)
     {
-        if (pool.Count <= 0)
-        {
-            obj = null;
+        if (!TryDequeue(out obj))
             return false;
-        }
 
-        obj = pool.Dequeue();
-        obj.SetActive(true);
+        Activate(obj);
         return true;
     }
+
     public int AvailableCount => pool.Count;
+
     /// <summary>
     /// Pool에 오브젝트 반환
     /// </summary>
     public void Release(GameObject obj)
     {
-        // 다 사용한 오브젝트는 비활성화하고 Pool에 반납
+        if (obj == null) return;
+
+        // 다 사용한 오브젝트는 비활성화
         obj.SetActive(false);
-        activeObjects.Remove(obj);
+
+        // 이미 반납된 오브젝트를 다시 넣으면 같은 오브젝트가 두 곳에서 사용되므로 Queue에는 넣지 않는다
+        if (!activeObjects.Remove(obj))
+        {
+            Debug.LogWarning($"[ObjectPool] 사용 중이 아닌 오브젝트 반납 시도: {obj.name}");
+            return;
+        }
+
         pool.Enqueue(obj);
     }
 
@@ -76,9 +84,12 @@ public class ObjectPool
     /// </summary>
     public void ReleaseAll()
     {
-        foreach(var obj in activeObjects)
+        foreach (var obj in activeObjects)
         {
-            obj?.SetActive(false);
+            // 외부에서 파괴된 오브젝트는 Pool에 다시 넣지 않는다
+            if (obj == null) continue;
+
+            obj.SetActive(false);
             pool.Enqueue(obj);
         }
 
@@ -124,6 +135,26 @@ public class ObjectPool
             GameObject obj = pool.Dequeue();
             if (obj != null) GameObject.Destroy(obj);
         }
-        pool.Clear();
+    }
+
+    /// <summary>
+    /// 대기 중인 오브젝트 꺼내기. 외부에서 파괴된 오브젝트는 버리고 다음 것을 꺼낸다.
+    /// </summary>
+    private bool TryDequeue(out GameObject obj)
+    {
+        while (pool.Count > 0)
+        {
+            obj = pool.Dequeue();
+            if (obj != null) return true;
+        }
+
+        obj = null;
+        return false;
+    }
+
+    private void Activate(GameObject obj)
+    {
+        obj.SetActive(true);
+        activeObjects.Add(obj);
     }
 }

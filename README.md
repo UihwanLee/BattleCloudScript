@@ -71,3 +71,59 @@ Brotato와 Shape of Dreams를 래퍼런스로 한 자동 전투 기반 액션 �
 - Engine: Unity 2022.3.62f2 LTS  
 - Language: C#  
 - Platform: PC  
+
+---
+
+## 담당 코드 (본인 작성)
+
+> 5인 팀 프로젝트입니다. 이 레포에는 팀 전체 스크립트가 들어 있으며, 아래 시스템은 본인이 설계·구현했습니다.
+
+### 1. 오브젝트 풀 시스템
+
+| 파일 | 역할 |
+|---|---|
+| [`ObjectPool.cs`](Scripts/00.Common/ObjectPool/ObjectPool.cs) | 대기 오브젝트(Queue)와 사용 중 오브젝트(HashSet)를 나눠 관리. 중복 반납 차단, 파괴된 오브젝트 건너뛰기 |
+| [`PoolManager.cs`](Scripts/99.Manager/PoolManager.cs) | 문자열 Key로 Pool을 모아 관리. 씬 전환 시 유지할 Pool만 남기고 정리 |
+| [`DropItemPool.cs`](Scripts/04.Item/DropItem/DropItemPool.cs) | 드롭 아이템 전용 Pool. 바닥 타일 위이면서 장애물과 겹치지 않는 위치 탐색 |
+
+```mermaid
+flowchart LR
+    A[DropItemPool / 투사체 / UI] -->|CreatePool · GetObject · ReleaseObject| B[PoolManager]
+    B -->|Key별 보관| C[ObjectPool]
+    C --> D[Queue: 대기]
+    C --> E[HashSet: 사용 중]
+    S[씬 로드] -->|persistent가 아닌 Pool 정리| B
+```
+
+### 2. 데이터 파이프라인
+
+| 파일 | 역할 |
+|---|---|
+| [`ExcelToJson.cs`](Scripts/97.Converter/Editor/ExcelToJson.cs) | 기획 엑셀의 모든 시트를 JSON으로 변환. ID 값 검증, 수식 셀은 계산 결과로 변환 |
+| [`ExcelToJsonConverterWindow.cs`](Scripts/97.Converter/Editor/ExcelToJsonConverterWindow.cs) | 변환을 실행하는 에디터 창 (`Tools > Excel to JSON Converter`) |
+| [`DataManager.cs`](Scripts/99.Manager/DataManager.cs) | JSON을 ID 기준 Dictionary, 티어별 List로 로드하고 `Get<T>(id)`로 조회 |
+| [`SaveManager.cs`](Scripts/94.Save/SaveManager.cs) | Newtonsoft.Json으로 진행 상황 저장. 임시 파일 교체 방식 저장 + 백업 복구 |
+
+```mermaid
+flowchart LR
+    X[기획 Excel] -->|ExcelToJson · ID 검증| J[Resources/Data/*.json]
+    J -->|파일당 1회 파싱| M[DataManager]
+    M -->|Get · 티어별 List| G[게임 로직]
+    G -->|Save| F[(세이브 파일)]
+    F -->|Load · 실패 시 .bak| G
+```
+
+## 리팩터링 기록
+
+프로젝트를 마친 뒤 담당 코드를 다시 검토하며 고친 내용입니다.
+
+| 시스템 | 문제 | 원인 | 개선 |
+|---|---|---|---|
+| 풀 | 같은 오브젝트가 두 곳에서 동시에 사용될 수 있음 | `Release()` 중복 호출 시 Queue에 두 번 들어감 | 사용 중 목록에 있을 때만 Queue에 반납 |
+| 풀 | 씬을 다시 불러오면 드롭 아이템 Pool이 사라짐 | 씬 로드 시 인스펙터 `excludeKeys`에 없는 Pool을 모두 삭제 | `CreatePool(..., persistent: true)`로 Pool을 만드는 쪽이 유지 여부를 선언 |
+| 데이터 | 엑셀 수식 셀이 `=A1*2` 같은 문자열로 저장됨 | 셀 타입이 Formula면 `ToString()` 사용 | 계산된 결과 타입(`CachedFormulaResultType`) 기준으로 값 변환 |
+| 데이터 | 같은 JSON을 여러 번 파싱 (로드 시 44회) | 티어·키별로 나눌 때마다 파일을 다시 읽음 | 경로별 파싱 캐시로 **16회**(파일 수)로 감소 |
+| 데이터 | 잘못된 데이터가 조용히 넘어감 | 중복 ID 덮어쓰기, 조건에 맞는 데이터가 없어도 확인하지 않음 | 로드 시 경고 추가 → 실제 데이터에서 중복 키·티어 불일치 발견 |
+| 저장 | 저장 중 종료되면 세이브 파일 손상 | 기존 파일에 바로 덮어씀 | `.tmp`에 쓴 뒤 `File.Replace`로 교체, 직전 저장본 `.bak` 유지 |
+| 저장 | 세이브 파일 `$type`으로 임의 타입 생성 가능 | `TypeNameHandling.Auto`만 사용 | `SerializationBinder`로 게임 어셈블리 타입만 허용 |
+| 빌드 | 에디터 툴이 플레이어 빌드에 포함되어 컴파일 오류 | `UnityEditor`를 쓰는 변환 툴이 `Editor` 폴더 밖에 있음 | `97.Converter/Editor/`로 이동 |

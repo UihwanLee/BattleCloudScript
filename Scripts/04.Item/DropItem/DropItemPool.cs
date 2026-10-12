@@ -1,8 +1,6 @@
 using System.Collections.Generic;
-using TMPro;
 using UnityEngine;
 using UnityEngine.Tilemaps;
-using UnityEngine.UIElements;
 
 public class DropItemPool : MonoBehaviour
 {
@@ -15,11 +13,15 @@ public class DropItemPool : MonoBehaviour
     [SerializeField] private List<Tilemap> groundTilemaps = new List<Tilemap>();
     [SerializeField] private LayerMask obstacleLayer;
 
-    private PoolManager poolManager;
-    
-    private static DropItemPool instance;
+    [Header("겹치지 않는 위치 탐색")]
+    [SerializeField] private float checkRadius = 0.4f;          // 장애물 겹침 검사 반경
+    [SerializeField] private float startSearchRadius = 0.5f;    // 첫 탐색 반경
+    [SerializeField] private float searchRadiusStep = 0.2f;     // 실패할 때마다 늘릴 반경
+    [SerializeField] private int maxAttempts = 15;
 
-    private Player player;
+    private PoolManager poolManager;
+
+    private static DropItemPool instance;
 
     public static DropItemPool Instance
     {
@@ -38,10 +40,12 @@ public class DropItemPool : MonoBehaviour
         if(instance == null)
         {
             instance = this;
-            DontDestroyOnLoad(gameObject);  
+            DontDestroyOnLoad(gameObject);
         }
-        else
+        else if (instance != this)
         {
+            // 씬이 다시 로드되면 기존 인스턴스는 이전 씬의 Tilemap을 들고 있으므로 새 씬의 참조로 교체
+            instance.groundTilemaps = groundTilemaps;
             Destroy(gameObject);
         }
     }
@@ -49,14 +53,13 @@ public class DropItemPool : MonoBehaviour
     private void Start()
     {
         poolManager = PoolManager.Instance;
-        player = GameManager.Instance.Player;
         Initialize();
     }
 
     private void Initialize()
     {
-        // Damage 생성
-        poolManager.CreatePool(key, prefab, maxCount, transform);
+        // DropItem Pool 생성 (DontDestroyOnLoad 오브젝트이므로 씬이 바뀌어도 Pool 유지)
+        poolManager.CreatePool(key, prefab, maxCount, transform, persistent: true);
     }
 
     public GameObject GetDropPrefab()
@@ -66,87 +69,87 @@ public class DropItemPool : MonoBehaviour
 
     public void SpawnDropItemWithFall(ISlotItem item, Vector3 startPosition, float height, float duration)
     {
-        GameObject go = poolManager.GetObject(key);
-        if (go.TryGetComponent<DropItem>(out DropItem dropItem))
-        {
-            dropItem.OpenItem(item);
-            dropItem.SetDropItem(item);
-            dropItem.SetPosition(startPosition);
-            dropItem.StartFallAnimation(height, duration);
-        }
+        if (!TrySpawn(item, out DropItem dropItem)) return;
+
+        dropItem.SetPosition(startPosition);
+        dropItem.StartFallAnimation(height, duration);
     }
 
     public void SpawnDropItem(ISlotItem item)
     {
-        // 드롭 아이템 생성
-        GameObject go = poolManager.GetObject(key);
-        if(go.TryGetComponent<DropItem>(out DropItem dropItem))
-        {
-            dropItem.OpenItem(item);
-            dropItem.SetDropItem(item);
-            dropItem.SetAttract(false);
-            Vector3 spawnPos = GetNonOverlappingPosition(player.transform.position);
-            dropItem.SetPosition(spawnPos);
-        }
-    }
+        if (!TrySpawn(item, out DropItem dropItem)) return;
 
-    private Vector3 GetNonOverlappingPosition(Vector3 center)
-    {
-        float checkRadius = 0.4f;
-        float searchRadius = 0.5f;
-        int maxAttempts = 15;
-
-        for (int i = 0; i < maxAttempts; i++)
-        {
-            Vector2 randomCircle = UnityEngine.Random.insideUnitCircle * searchRadius;
-            Vector3 candidatePos = center + new Vector3(randomCircle.x, randomCircle.y, 0);
-
-            // 바닥 타일 리스트 체크
-            bool isOnGround = false;
-            foreach (Tilemap tm in groundTilemaps)
-            {
-                // 각 타일맵의 좌표계에 맞춰 변환 후 타일 존재 여부 확인
-                Vector3Int cellPos = tm.WorldToCell(candidatePos);
-                if (tm.HasTile(cellPos))
-                {
-                    isOnGround = true;
-                    break;
-                }
-            }
-
-            // Ground 체크
-            if (!isOnGround)
-            {
-                searchRadius += 0.2f;
-                continue;
-            }
-
-            // Layer 체크 
-            Collider2D hit = Physics2D.OverlapCircle(candidatePos, checkRadius, obstacleLayer);
-
-            if (hit == null)
-            {
-                return candidatePos;
-            }
-
-            searchRadius += 0.2f;
-        }
-
-        // 모든 시도가 실패하면 center 반환 
-        return center;
+        dropItem.SetAttract(false);
+        Vector3 spawnPos = GetNonOverlappingPosition(GameManager.Instance.Player.transform.position);
+        dropItem.SetPosition(spawnPos);
     }
 
     public void SpawnDropItemByDropAnimation(ISlotItem item, Vector3 position, Vector3 targetPosition, float dropDuration)
     {
-        // 드롭 아이템 생성
+        if (!TrySpawn(item, out DropItem dropItem)) return;
+
+        dropItem.SetPosition(position);
+        dropItem.StartDropAnimation(targetPosition, dropDuration);
+    }
+
+    /// <summary>
+    /// Pool에서 DropItem을 꺼내 아이템 정보를 적용
+    /// </summary>
+    private bool TrySpawn(ISlotItem item, out DropItem dropItem)
+    {
+        dropItem = null;
+
         GameObject go = poolManager.GetObject(key);
-        if (go.TryGetComponent<DropItem>(out DropItem dropItem))
+        if (go == null) return false;
+
+        if (!go.TryGetComponent(out dropItem))
         {
-            dropItem.OpenItem(item);
-            dropItem.SetDropItem(item);
-            dropItem.SetPosition(position);
-            dropItem.StartDropAnimation(targetPosition, dropDuration);
+            Debug.LogError($"[DropItemPool] {key} 프리팹에 DropItem 컴포넌트가 없습니다.");
+            poolManager.ReleaseObject(key, go);
+            return false;
         }
+
+        dropItem.OpenItem(item);
+        dropItem.SetDropItem(item);
+        return true;
+    }
+
+    /// <summary>
+    /// center 주변에서 바닥 타일 위이면서 장애물과 겹치지 않는 위치 탐색
+    /// 실패할 때마다 탐색 반경을 넓히고, 끝까지 못 찾으면 center 반환
+    /// </summary>
+    private Vector3 GetNonOverlappingPosition(Vector3 center)
+    {
+        float searchRadius = startSearchRadius;
+
+        for (int i = 0; i < maxAttempts; i++)
+        {
+            Vector2 randomCircle = Random.insideUnitCircle * searchRadius;
+            Vector3 candidatePos = center + new Vector3(randomCircle.x, randomCircle.y, 0);
+
+            if (IsOnGround(candidatePos) &&
+                Physics2D.OverlapCircle(candidatePos, checkRadius, obstacleLayer) == null)
+            {
+                return candidatePos;
+            }
+
+            searchRadius += searchRadiusStep;
+        }
+
+        return center;
+    }
+
+    private bool IsOnGround(Vector3 position)
+    {
+        foreach (Tilemap tm in groundTilemaps)
+        {
+            if (tm == null) continue;
+
+            // 각 타일맵의 좌표계에 맞춰 변환 후 타일 존재 여부 확인
+            if (tm.HasTile(tm.WorldToCell(position)))
+                return true;
+        }
+        return false;
     }
 
     public void Release(GameObject obj)
@@ -159,15 +162,7 @@ public class DropItemPool : MonoBehaviour
     /// </summary>
     public void ReleaseAllDropItem()
     {
-        // 현재 하위에 있는 오브젝트 가져오기
-        DropItem[] dropItems = transform.GetComponentsInChildren<DropItem>();
-
-        foreach(DropItem items in dropItems)
-        {
-            // 활성화되어 있는 obj 모두 제거
-            if(items.gameObject.activeSelf)
-                poolManager.ReleaseObject(key, items.gameObject);
-        }
+        poolManager.ReleaseAllObject(key);
     }
 
     #region 프로퍼티
